@@ -1,38 +1,40 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 
+const SITE_TOKEN = import.meta.env.VITE_SITE_TOKEN || ''
+
 // ── API helpers ───────────────────────────────────────────────────────────────
 
 const api = {
   list: () =>
-    fetch('/.netlify/functions/notion?action=list').then((r) => r.json()),
+    fetch('/.netlify/functions/notion?action=list', { headers: { 'x-site-token': SITE_TOKEN } }).then((r) => r.json()),
   create: (data) =>
     fetch('/.netlify/functions/notion?action=create', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-site-token': SITE_TOKEN },
       body: JSON.stringify(data),
     }).then((r) => r.json()),
   update: (data) =>
     fetch('/.netlify/functions/notion?action=update', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-site-token': SITE_TOKEN },
       body: JSON.stringify(data),
     }).then((r) => r.json()),
   delete: (id) =>
     fetch('/.netlify/functions/notion?action=delete', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-site-token': SITE_TOKEN },
       body: JSON.stringify({ id }),
     }).then((r) => r.json()),
   extract: (data) =>
     fetch('/.netlify/functions/extract', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-site-token': SITE_TOKEN },
       body: JSON.stringify(data),
     }).then((r) => r.json()),
   og: (url) =>
     fetch('/.netlify/functions/og', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-site-token': SITE_TOKEN },
       body: JSON.stringify({ url }),
     }).then((r) => r.json()),
 }
@@ -63,7 +65,7 @@ function formatDate(str) {
   if (!str) return null
   const d = parseDate(str)
   if (!d) return str
-  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+  return d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' })
 }
 
 function formatSaved(iso) {

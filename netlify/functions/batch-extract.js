@@ -1,6 +1,6 @@
-// netlify/functions/extract.js
+// netlify/functions/batch-extract.js
 const SITE_TOKEN = process.env.SITE_TOKEN;
-// Calls Anthropic API server-side to extract event details from text or image
+// Accepts multiple images + optional text, extracts multiple events in one Claude call
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -20,39 +20,47 @@ exports.handler = async (event) => {
   }
 
   try {
-    const { text, imageBase64, imageType } = JSON.parse(event.body);
+    const { images, text, sourceUrl } = JSON.parse(event.body);
+    // images: array of { base64, type } objects
+    // text: optional extra context string
+    // sourceUrl: optional original URL
 
     const userContent = [];
 
-    if (imageBase64) {
-      userContent.push({
-        type: 'image',
-        source: {
-          type: 'base64',
-          media_type: imageType || 'image/jpeg',
-          data: imageBase64,
-        },
-      });
+    // Add all images
+    if (images && images.length > 0) {
+      for (const img of images) {
+        userContent.push({
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: img.type || 'image/jpeg',
+            data: img.base64,
+          },
+        });
+      }
     }
 
     userContent.push({
       type: 'text',
-      text: `Extract event details from this ${imageBase64 ? 'screenshot' : 'text'}.
+      text: `Extract ALL events from ${images?.length > 1 ? 'these images' : 'this content'}.
+${text ? `Extra context: ${text}` : ''}
+${sourceUrl ? `Source URL: ${sourceUrl}` : ''}
 
-Return ONLY a JSON object with these fields:
+Return ONLY a JSON array of event objects. Each object must have:
 - name: event name (string, required)
-- date: ISO date YYYY-MM-DD if mentioned, null otherwise. If only month/year use 1st of month.
+- date: ISO date YYYY-MM-DD if mentioned, null if not. If only month/year, use 1st of that month.
 - location: venue or city if mentioned, null otherwise
-- type: one of Music, Film, Art, Food, Market, Sport, Other — pick the best fit, null if unclear
-- description: 1-3 sentence summary of what this event is, capturing its vibe. null if nothing to add.
+- type: one of Music, Film, Art, Food, Market, Sport, Other — best fit, null if unclear
+- description: 1-2 sentence summary capturing the vibe and key details. null if nothing useful.
 - venueUrl: website URL if mentioned, null otherwise
-- sourceUrl: Instagram or original URL if visible, null otherwise
-- imageUrl: if there's a clear event poster image URL mentioned, null otherwise
-- people: null (leave blank, user fills this in)
+- sourceUrl: "${sourceUrl || null}"
+- imageUrl: null
 
-${text ? `Text: "${text}"` : 'Extract from the screenshot above.'}
+If multiple events are present (e.g. a weekly programme), return ALL of them as separate objects in the array.
+If only one event, return an array with one object.
 
-Return only the raw JSON object. No markdown, no explanation.`,
+Return only the raw JSON array. No markdown, no explanation, no preamble.`,
     });
 
     const res = await fetch('https://api.anthropic.com/v1/messages', {
@@ -64,7 +72,7 @@ Return only the raw JSON object. No markdown, no explanation.`,
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
-        max_tokens: 600,
+        max_tokens: 2000,
         messages: [{ role: 'user', content: userContent }],
       }),
     });
@@ -77,7 +85,8 @@ Return only the raw JSON object. No markdown, no explanation.`,
       .replace(/```json|```/g, '')
       .trim();
 
-    const parsed = JSON.parse(raw);
+    let parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) parsed = [parsed];
 
     return {
       statusCode: 200,

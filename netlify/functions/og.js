@@ -1,4 +1,5 @@
 // netlify/functions/og.js
+const SITE_TOKEN = process.env.SITE_TOKEN;
 // Fetches Open Graph metadata from a URL to get preview image + title
 
 const cors = {
@@ -10,6 +11,12 @@ const cors = {
 exports.handler = async (event) => {
   if (event.httpMethod === 'OPTIONS') {
     return { statusCode: 200, headers: cors, body: '' };
+  }
+
+  // ── AUTH ───────────────────────────────────────────────────────────────────
+  const token = event.headers['x-site-token'];
+  if (!token || token !== SITE_TOKEN) {
+    return { statusCode: 401, headers: cors, body: JSON.stringify({ error: 'Unauthorized' }) };
   }
 
   try {

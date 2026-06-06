@@ -1,5 +1,6 @@
 // netlify/functions/notion.js
 const NOTION_KEY = process.env.NOTION_API_KEY;
+const SITE_TOKEN = process.env.SITE_TOKEN;
 const DATABASE_ID = process.env.NOTION_DATABASE_ID;
 const NOTION_VERSION = '2022-06-28';
 
@@ -22,7 +23,14 @@ exports.handler = async (event) => {
 
   const action = event.queryStringParameters?.action;
 
+  // ── AUTH ─────────────────────────────────────────────────────────────────
+  const token = event.headers['x-site-token'] || event.queryStringParameters?.token;
+  if (!token || token !== SITE_TOKEN) {
+    return { statusCode: 401, headers: cors, body: JSON.stringify({ error: 'Unauthorized' }) };
+  }
+
   try {
+
     // ── DEBUG ────────────────────────────────────────────────────────────────
     if (action === 'debug') {
       const testRes = await fetch(
@@ -57,7 +65,29 @@ exports.handler = async (event) => {
         }
       );
       const data = await res.json();
-      const events = (data.results || []).map(mapPage);
+
+      // Fetch page content (descriptions) for all pages in parallel
+      const pages = data.results || [];
+      const withContent = await Promise.all(pages.map(async (page) => {
+        try {
+          const blockRes = await fetch(
+            `https://api.notion.com/v1/blocks/${page.id}/children?page_size=5`,
+            { headers }
+          );
+          const blockData = await blockRes.json();
+          const description = (blockData.results || [])
+            .filter(b => b.type === 'paragraph')
+            .map(b => b.paragraph.rich_text.map(t => t.plain_text).join(''))
+            .filter(Boolean)
+            .join(' ')
+            || null;
+          return { ...page, _description: description };
+        } catch {
+          return { ...page, _description: null };
+        }
+      }));
+
+      const events = withContent.map(mapPage);
       return {
         statusCode: 200,
         headers: { ...cors, 'Content-Type': 'application/json' },
@@ -86,7 +116,7 @@ exports.handler = async (event) => {
       return {
         statusCode: 200,
         headers: { ...cors, 'Content-Type': 'application/json' },
-        body: JSON.stringify(mapPage(data)),
+        body: JSON.stringify(mapPage({ ...data, _description: body.description || null })),
       };
     }
 
@@ -101,6 +131,39 @@ exports.handler = async (event) => {
         statusCode: 200,
         headers: { ...cors, 'Content-Type': 'application/json' },
         body: JSON.stringify(mapPage(data)),
+      };
+    }
+
+
+    // ── MERGE (update existing with new info, append to description) ──────────
+    if (action === 'merge' && event.httpMethod === 'POST') {
+      const { id, description, ...body } = JSON.parse(event.body);
+      // Update properties with any new non-null values
+      const cleanBody = Object.fromEntries(
+        Object.entries(body).filter(([_, v]) => v !== null && v !== undefined && v !== '')
+      );
+      if (Object.keys(cleanBody).length > 0) {
+        await fetch(`https://api.notion.com/v1/pages/${id}`, {
+          method: 'PATCH', headers, body: JSON.stringify({ properties: buildProperties(cleanBody) }),
+        });
+      }
+      // Append new description as a new paragraph block if provided
+      if (description) {
+        await fetch(`https://api.notion.com/v1/blocks/${id}/children`, {
+          method: 'PATCH',
+          headers,
+          body: JSON.stringify({
+            children: [{
+              object: 'block', type: 'paragraph',
+              paragraph: { rich_text: [{ type: 'text', text: { content: `[Update] ${description}` } }] },
+            }],
+          }),
+        });
+      }
+      return {
+        statusCode: 200,
+        headers: { ...cors, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ success: true, merged: true }),
       };
     }
 
@@ -139,6 +202,7 @@ function mapPage(page) {
     sourceUrl: p['Source URL']?.url || null,
     venueUrl: p['Venue URL']?.url || null,
     addedAt: page.created_time || null,
+    description: page._description || null,
   };
 }
 
