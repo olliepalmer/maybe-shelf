@@ -1,7 +1,4 @@
 // netlify/functions/ingest.js
-// Single endpoint for the iOS Share Sheet shortcut.
-// Accepts text, a URL, or base64 images — extracts events, deduplicates, saves to Notion.
-
 const NOTION_KEY = process.env.NOTION_API_KEY;
 const DATABASE_ID = process.env.NOTION_DATABASE_ID;
 const SITE_TOKEN = process.env.SITE_TOKEN;
@@ -32,29 +29,64 @@ exports.handler = async (event) => {
 
   try {
     const body = JSON.parse(event.body);
-    // body.text: string (caption, URL, or freeform text)
-    // body.images: array of { base64, type } (optional)
-    // body.sourceUrl: string (optional)
+    const { text, sourceUrl } = body;
 
-    const { text, images, sourceUrl } = body;
+    // ── Normalise images ───────────────────────────────────────────────────────
+    // Shortcuts sends ImagesJSON as a string like:
+    // {"base64":"...","type":"image/jpeg"}
+    // or multiple items separated by newlines (since Add to Variable joins with newline)
+    // We need to turn this into an array of {base64, type} objects
+    let images = [];
+    const rawImages = body.images;
 
-    // ── STEP 1: Extract events via Claude ─────────────────────────────────────
+    if (rawImages) {
+      if (Array.isArray(rawImages)) {
+        images = rawImages;
+      } else if (typeof rawImages === 'string' && rawImages.trim().length > 0) {
+        // Try splitting by newline first (Shortcuts joins list items with \n)
+        const lines = rawImages.split('\n').map(l => l.trim()).filter(Boolean);
+        for (const line of lines) {
+          try {
+            const parsed = JSON.parse(line);
+            if (parsed.base64) images.push(parsed);
+          } catch {
+            // Plain base64 string
+            if (line.length > 100) images.push({ base64: line, type: 'image/jpeg' });
+          }
+        }
+        // If that didn't work, try parsing the whole thing as JSON
+        if (images.length === 0) {
+          try {
+            const parsed = JSON.parse(rawImages);
+            images = Array.isArray(parsed) ? parsed : [parsed];
+          } catch {
+            // Give up on images, just use text
+          }
+        }
+      }
+    }
+
+    // ── Build Claude content ───────────────────────────────────────────────────
     const userContent = [];
 
-    if (images && images.length > 0) {
-      for (const img of images) {
+    for (const img of images) {
+      const base64 = typeof img === 'string' ? img : img.base64;
+      const mediaType = img.type || 'image/jpeg';
+      if (base64 && base64.length > 100) {
         userContent.push({
           type: 'image',
-          source: { type: 'base64', media_type: img.type || 'image/jpeg', data: img.base64 },
+          source: { type: 'base64', media_type: mediaType, data: base64.replace(/\s/g, '') },
         });
       }
     }
 
+    // Always add text prompt
     userContent.push({
       type: 'text',
       text: `Extract ALL events from this content.
 ${text ? `Text/URL: ${text}` : ''}
 ${sourceUrl ? `Source: ${sourceUrl}` : ''}
+${userContent.length === 1 ? 'No images provided — extract from text only.' : ''}
 
 Return ONLY a JSON array. Each event object must have:
 - name: string (required)
@@ -69,6 +101,7 @@ Return ALL events found. If one event, return array of one.
 Raw JSON array only — no markdown, no explanation.`,
     });
 
+    // ── Call Claude ────────────────────────────────────────────────────────────
     const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -84,6 +117,15 @@ Raw JSON array only — no markdown, no explanation.`,
     });
 
     const claudeData = await claudeRes.json();
+
+    if (!claudeData.content || !Array.isArray(claudeData.content)) {
+      return {
+        statusCode: 500,
+        headers: cors,
+        body: JSON.stringify({ error: 'Claude API error', detail: claudeData }),
+      };
+    }
+
     const raw = claudeData.content
       .map(b => b.text || '')
       .join('')
@@ -91,17 +133,22 @@ Raw JSON array only — no markdown, no explanation.`,
       .replace(/```json|```/g, '')
       .trim();
 
-    let extracted = JSON.parse(raw);
-    if (!Array.isArray(extracted)) extracted = [extracted];
+    let extracted;
+    try {
+      extracted = JSON.parse(raw);
+      if (!Array.isArray(extracted)) extracted = [extracted];
+    } catch {
+      return {
+        statusCode: 500,
+        headers: cors,
+        body: JSON.stringify({ error: 'Could not parse Claude response', raw }),
+      };
+    }
 
-    // ── STEP 2: Fetch existing events for dedup ───────────────────────────────
+    // ── Fetch existing events for dedup ────────────────────────────────────────
     const existingRes = await fetch(
       `https://api.notion.com/v1/databases/${DATABASE_ID}/query`,
-      {
-        method: 'POST',
-        headers: notionHeaders,
-        body: JSON.stringify({ page_size: 100 }),
-      }
+      { method: 'POST', headers: notionHeaders, body: JSON.stringify({ page_size: 100 }) }
     );
     const existingData = await existingRes.json();
     const existing = (existingData.results || []).map(p => ({
@@ -110,7 +157,7 @@ Raw JSON array only — no markdown, no explanation.`,
       date: p.properties?.Date?.date?.start || null,
     }));
 
-    // ── STEP 3: For each extracted event, create or merge ─────────────────────
+    // ── Create or merge each event ─────────────────────────────────────────────
     let created = 0;
     let merged = 0;
 
@@ -118,57 +165,40 @@ Raw JSON array only — no markdown, no explanation.`,
       const evName = (ev.name || '').toLowerCase().trim();
       const evDate = ev.date || null;
 
-      // Check duplicate: same name + same date
-      const duplicate = existing.find(e => {
-        const nameMatch = e.name === evName;
-        const dateMatch = e.date === evDate;
-        return nameMatch && dateMatch;
-      });
+      const duplicate = existing.find(e => e.name === evName && e.date === evDate);
 
       if (duplicate) {
-        // Merge: append description as new block if we have new info
         if (ev.description) {
           await fetch(`https://api.notion.com/v1/blocks/${duplicate.id}/children`, {
             method: 'PATCH',
             headers: notionHeaders,
             body: JSON.stringify({
               children: [{
-                object: 'block',
-                type: 'paragraph',
-                paragraph: {
-                  rich_text: [{ type: 'text', text: { content: `[Update] ${ev.description}` } }],
-                },
+                object: 'block', type: 'paragraph',
+                paragraph: { rich_text: [{ type: 'text', text: { content: `[Update] ${ev.description}` } }] },
               }],
             }),
           });
         }
         merged++;
       } else {
-        // Create new event
-        const properties = buildProperties(ev);
         const payload = {
           parent: { database_id: DATABASE_ID },
-          properties,
+          properties: buildProperties(ev),
         };
         if (ev.description) {
           payload.children = [{
-            object: 'block',
-            type: 'paragraph',
-            paragraph: {
-              rich_text: [{ type: 'text', text: { content: ev.description } }],
-            },
+            object: 'block', type: 'paragraph',
+            paragraph: { rich_text: [{ type: 'text', text: { content: ev.description } }] },
           }];
         }
         await fetch('https://api.notion.com/v1/pages', {
-          method: 'POST',
-          headers: notionHeaders,
-          body: JSON.stringify(payload),
+          method: 'POST', headers: notionHeaders, body: JSON.stringify(payload),
         });
         created++;
       }
     }
 
-    // ── STEP 4: Return summary ─────────────────────────────────────────────────
     const parts = [];
     if (created > 0) parts.push(`${created} event${created > 1 ? 's' : ''} added`);
     if (merged > 0) parts.push(`${merged} duplicate${merged > 1 ? 's' : ''} updated`);
