@@ -38,5 +38,5 @@ npm run dev
 You'll also need [Netlify CLI](https://docs.netlify.com/cli/get-started/) for local function testing:
 
 ```bash
-npx netlify-cli dev
+- [ ] npx netlify-cli dev
 ```
