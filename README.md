@@ -1,6 +1,6 @@
 # Maybe Shelf
 
-Your personal events inbox. Browse things you might want to go to, powered by Notion as a database and Claude for smart extraction.
+Your personal events inbox. Browse things you might want to go to, powered by Notion as a database and Claude for smart extraction. 
 
 ## Setup
 
@@ -8,7 +8,7 @@ Your personal events inbox. Browse things you might want to go to, powered by No
 
 ```
 NOTION_API_KEY=secret_xxxxxxxxxxxx
-NOTION_DATABASE_ID=ed3b3c4e-4da9-4364-92ca-6beb5a03df65
+NOTION_DATABASE_ID=xxxxxxxxxxx
 ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxx
 ```
 
