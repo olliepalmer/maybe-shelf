@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 
 const SITE_TOKEN = import.meta.env.VITE_SITE_TOKEN || ''
 
@@ -454,125 +454,6 @@ function CalendarWidget({ events }) {
   )
 }
 
-// ── CaptureBox ────────────────────────────────────────────────────────────────
-
-function CaptureBox({ onAdd }) {
-  const [text, setText] = useState('')
-  const [status, setStatus] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [image, setImage] = useState(null) // { base64, type, preview }
-  const fileRef = useRef()
-
-  const handleFile = (file) => {
-    if (!file) return
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      const base64 = e.target.result.split(',')[1]
-      setImage({ base64, type: file.type, preview: e.target.result })
-    }
-    reader.readAsDataURL(file)
-  }
-
-  const handleDrop = (e) => {
-    e.preventDefault()
-    const file = e.dataTransfer.files[0]
-    if (file?.type.startsWith('image/')) handleFile(file)
-  }
-
-  const submit = async () => {
-    if ((!text.trim() && !image) || loading) return
-    setLoading(true)
-    setStatus('Extracting details…')
-    try {
-      const payload = image
-        ? { imageBase64: image.base64, imageType: image.type, text: text.trim() || undefined }
-        : { text: text.trim() }
-
-      const extracted = await api.extract(payload)
-
-      // Try to fetch OG image if sourceUrl present and no image
-      if (!extracted.imageUrl && extracted.sourceUrl) {
-        try {
-          const og = await api.og(extracted.sourceUrl)
-          if (og.image) extracted.imageUrl = og.image
-        } catch (_) {}
-      }
-
-      const created = await api.create(extracted)
-      onAdd(created)
-      setText('')
-      setImage(null)
-      setStatus(`Added: ${created.name}`)
-      setTimeout(() => setStatus(''), 3000)
-    } catch (err) {
-      setStatus('Could not extract — try again')
-      setTimeout(() => setStatus(''), 3000)
-    }
-    setLoading(false)
-  }
-
-  return (
-    <div
-      style={{
-        background: 'var(--warm-white)', borderRadius: 'var(--radius)',
-        overflow: 'hidden', boxShadow: 'var(--shadow)',
-        border: '1px solid var(--ink-06)',
-      }}
-      onDrop={handleDrop}
-      onDragOver={e => e.preventDefault()}
-    >
-      {image && (
-        <div style={{ position: 'relative' }}>
-          <img src={image.preview} alt="" style={{ width: '100%', maxHeight: 180, objectFit: 'cover', display: 'block' }} />
-          <button onClick={() => setImage(null)} style={{
-            position: 'absolute', top: 8, right: 8,
-            background: 'rgba(0,0,0,0.5)', border: 'none', color: '#fff',
-            borderRadius: '50%', width: 26, height: 26, fontSize: 16, cursor: 'pointer',
-          }}>×</button>
-        </div>
-      )}
-      <textarea
-        value={text}
-        onChange={e => setText(e.target.value)}
-        onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit() }}
-        placeholder={image ? 'Add any extra context (optional)…' : 'Paste a caption, type an event, or drop a screenshot…'}
-        style={{
-          width: '100%', minHeight: 80, padding: '14px 16px',
-          border: 'none', outline: 'none', resize: 'none',
-          background: 'transparent', fontSize: 15, lineHeight: 1.5,
-          color: 'var(--ink)',
-        }}
-      />
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 8,
-        padding: '8px 12px', borderTop: '1px solid var(--ink-06)',
-      }}>
-        <button
-          onClick={() => fileRef.current?.click()}
-          style={{
-            background: 'none', border: '1px solid var(--ink-10)',
-            borderRadius: 20, padding: '6px 12px',
-            fontSize: 12, color: 'var(--ink-60)',
-          }}
-          title="Attach screenshot"
-        >📎 Screenshot</button>
-        <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }}
-          onChange={e => handleFile(e.target.files[0])} />
-        <span style={{ flex: 1, fontSize: 12, color: 'var(--ink-30)' }}>{status}</span>
-        <button
-          onClick={submit}
-          disabled={loading}
-          style={{
-            padding: '7px 18px', background: 'var(--ink)',
-            color: 'var(--cream)', border: 'none',
-            borderRadius: 20, fontSize: 13, fontWeight: 500,
-            opacity: loading ? 0.5 : 1,
-          }}
-        >{loading ? 'Adding…' : 'Add ↗'}</button>
-      </div>
-    </div>
-  )
-}
 
 // ── App ───────────────────────────────────────────────────────────────────────
 
@@ -597,8 +478,6 @@ export default function App() {
   }, [])
 
   useEffect(() => { load() }, [load])
-
-  const handleAdd = (ev) => setEvents(prev => [...prev, ev])
 
   const handleUpdate = async (id, changes) => {
     setEvents(prev => prev.map(e => e.id === id ? { ...e, ...changes } : e))
@@ -650,8 +529,12 @@ export default function App() {
               maybe shelf
             </h1>
             <span style={{ fontSize: 13, color: 'var(--ink-30)' }}>
-              {events.filter(e => !isPast(e)).length} upcoming
+              {events.filter(e => !isPast(e) && e.date).length} upcoming
             </span>
+            <button onClick={load} title="Refresh" style={{
+              background: 'none', border: 'none', color: 'var(--ink-30)',
+              fontSize: 16, cursor: 'pointer', padding: '0 4px', lineHeight: 1,
+            }}>↻</button>
           </div>
           <div style={{ display: 'flex', gap: 0 }}>
             {['inbox', 'calendar'].map(v => (
@@ -669,11 +552,6 @@ export default function App() {
 
       {/* Body */}
       <div style={{ maxWidth: 900, margin: '0 auto', padding: '20px 16px 80px' }}>
-
-        {/* Capture */}
-        <div style={{ marginBottom: 20 }}>
-          <CaptureBox onAdd={handleAdd} />
-        </div>
 
         {view === 'calendar' ? (
           <CalendarWidget events={events} />
@@ -706,7 +584,7 @@ export default function App() {
               </div>
             ) : filtered.length === 0 ? (
               <div style={{ textAlign: 'center', padding: 60, color: 'var(--ink-30)', fontFamily: 'var(--serif)', fontSize: 16, fontStyle: 'italic' }}>
-                {filter === 'past' ? 'No past events' : 'Nothing here yet — add something above'}
+                {filter === 'past' ? 'No past events' : 'Nothing here yet'}
               </div>
             ) : (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 14 }}>
