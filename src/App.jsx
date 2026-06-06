@@ -2,6 +2,73 @@ import { useState, useEffect, useCallback } from 'react'
 
 const SITE_TOKEN = import.meta.env.VITE_SITE_TOKEN || ''
 
+const WRITE_PIN = import.meta.env.VITE_WRITE_PIN || ''
+const PIN_STORAGE_KEY = 'maybe-shelf-pin-verified'
+
+function checkPin() {
+  try { return localStorage.getItem(PIN_STORAGE_KEY) === WRITE_PIN } catch { return false }
+}
+
+function savePin() {
+  try { localStorage.setItem(PIN_STORAGE_KEY, WRITE_PIN) } catch {}
+}
+
+function PinModal({ onSuccess, onClose }) {
+  const [value, setValue] = useState('')
+  const [error, setError] = useState(false)
+
+  const submit = () => {
+    if (value === WRITE_PIN) {
+      savePin()
+      onSuccess()
+    } else {
+      setError(true)
+      setValue('')
+      setTimeout(() => setError(false), 1500)
+    }
+  }
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(28,25,23,0.5)',
+      backdropFilter: 'blur(4px)', zIndex: 200,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      padding: 20,
+    }} onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{
+        background: 'var(--warm-white)', borderRadius: 'var(--radius)',
+        padding: '28px 24px', width: '100%', maxWidth: 320,
+        boxShadow: 'var(--shadow-lg)', textAlign: 'center',
+      }}>
+        <div style={{ fontFamily: 'var(--serif)', fontSize: 20, marginBottom: 6 }}>Enter PIN</div>
+        <div style={{ fontSize: 13, color: 'var(--ink-60)', marginBottom: 20 }}>To make changes to your shelf</div>
+        <input
+          type="password"
+          value={value}
+          onChange={e => setValue(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && submit()}
+          autoFocus
+          placeholder="PIN"
+          style={{
+            width: '100%', padding: '10px 14px', fontSize: 18,
+            textAlign: 'center', letterSpacing: '0.3em',
+            border: `1.5px solid ${error ? 'var(--red)' : 'var(--ink-10)'}`,
+            borderRadius: 'var(--radius-sm)', background: 'var(--cream)',
+            outline: 'none', marginBottom: 12,
+            transition: 'border-color 0.15s',
+          }}
+        />
+        {error && <div style={{ fontSize: 12, color: 'var(--red)', marginBottom: 8 }}>Incorrect PIN</div>}
+        <button onClick={submit} style={{
+          width: '100%', padding: '11px', background: 'var(--ink)',
+          color: 'var(--cream)', border: 'none', borderRadius: 'var(--radius-sm)',
+          fontSize: 14, fontWeight: 500, cursor: 'pointer',
+        }}>Unlock</button>
+      </div>
+    </div>
+  )
+}
+
 // ── API helpers ───────────────────────────────────────────────────────────────
 
 const api = {
@@ -103,6 +170,7 @@ const FILTERS = [
   { key: 'soon', label: 'This month' },
   { key: 'going', label: 'Going' },
   { key: 'nodate', label: 'No date' },
+  { key: 'notgoing', label: 'Not going' },
   { key: 'past', label: 'Past' },
 ]
 
@@ -112,6 +180,7 @@ function EventCard({ ev, onUpdate, onDelete, onEdit }) {
   const past = isPast(ev)
   const nudge = nudgeText(ev)
   const going = ev.status === 'Going'
+  const notGoing = ev.status === 'Not going'
   const days = daysUntil(ev)
 
   return (
@@ -202,6 +271,13 @@ function EventCard({ ev, onUpdate, onDelete, onEdit }) {
                 fontWeight: 500,
               }}>✓ Going</span>
             )}
+            {notGoing && (
+              <span style={{
+                fontSize: 11, padding: '3px 9px', borderRadius: 20,
+                background: 'var(--red-light)', color: 'var(--red)',
+                fontWeight: 500,
+              }}>✕ Not going</span>
+            )}
           </div>
         )}
 
@@ -236,7 +312,7 @@ function EventCard({ ev, onUpdate, onDelete, onEdit }) {
         </div>
 
         {/* Actions */}
-        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
           <button
             onClick={() => onUpdate(ev.id, { status: going ? 'Maybe' : 'Going' })}
             style={{
@@ -249,14 +325,27 @@ function EventCard({ ev, onUpdate, onDelete, onEdit }) {
           >{going ? '✓ Going' : 'Going'}</button>
 
           <button
-            onClick={() => onUpdate(ev.id, { status: ev.status === 'Interested' ? 'Maybe' : 'Interested' })}
+            onClick={() => onUpdate(ev.id, { status: ev.status === 'Maybe' ? 'Interested' : 'Maybe' })}
             style={{
               padding: '6px 14px', fontSize: 12, fontWeight: 500,
               borderRadius: 20,
-              border: `1px solid ${ev.status === 'Interested' ? 'var(--ink-30)' : 'var(--ink-10)'}`,
-              background: 'transparent', color: 'var(--ink-60)',
+              border: `1px solid ${ev.status === 'Maybe' ? 'var(--ink-30)' : 'var(--ink-10)'}`,
+              background: ev.status === 'Maybe' ? 'var(--cream)' : 'transparent',
+              color: 'var(--ink-60)',
             }}
           >Maybe</button>
+
+          <button
+            onClick={() => onUpdate(ev.id, { status: notGoing ? 'Maybe' : 'Not going' })}
+            style={{
+              padding: '6px 14px', fontSize: 12, fontWeight: 500,
+              borderRadius: 20,
+              border: `1px solid ${notGoing ? 'var(--red)' : 'var(--ink-10)'}`,
+              background: notGoing ? 'var(--red-light)' : 'transparent',
+              color: notGoing ? 'var(--red)' : 'var(--ink-60)',
+              transition: 'all 0.15s',
+            }}
+          >{notGoing ? '✕ Not going' : 'Not going'}</button>
 
           <div style={{ flex: 1 }} />
 
@@ -464,6 +553,14 @@ export default function App() {
   const [filter, setFilter] = useState('upcoming')
   const [view, setView] = useState('inbox')
   const [editingEv, setEditingEv] = useState(null)
+  const [pinModal, setPinModal] = useState(null) // stores the action to run after PIN
+  const [pinVerified, setPinVerified] = useState(checkPin)
+
+
+  const requirePin = (action) => {
+    if (pinVerified) { action(); return }
+    setPinModal(() => action)
+  }
 
   const load = useCallback(async () => {
     try {
@@ -479,33 +576,34 @@ export default function App() {
 
   useEffect(() => { load() }, [load])
 
-  const handleUpdate = async (id, changes) => {
+  const handleUpdate = (id, changes) => requirePin(async () => {
     setEvents(prev => prev.map(e => e.id === id ? { ...e, ...changes } : e))
     await api.update({ id, ...changes })
-  }
+  })
 
-  const handleDelete = async (id) => {
+  const handleDelete = (id) => requirePin(async () => {
     setEvents(prev => prev.filter(e => e.id !== id))
     await api.delete(id)
-  }
+  })
 
-  const handleEditSave = async (form) => {
+  const handleEditSave = (form) => requirePin(async () => {
     setEvents(prev => prev.map(e => e.id === editingEv.id ? { ...e, ...form } : e))
     await api.update({ id: editingEv.id, ...form })
     setEditingEv(null)
-  }
+  })
 
   const now = new Date(); now.setHours(0, 0, 0, 0)
   const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0)
 
   const filtered = events.filter(ev => {
-    if (filter === 'upcoming') return !isPast(ev)
+    if (filter === 'upcoming') return !isPast(ev) && ev.status !== 'Not going'
     if (filter === 'soon') {
       const d = parseDate(ev.date)
       return d && d >= now && d <= monthEnd
     }
-    if (filter === 'going') return ev.status === 'Going' && !isPast(ev)
+    if (filter === 'going') return ev.status === 'Going' && !isPast(ev) && ev.status !== 'Not going'
     if (filter === 'nodate') return !ev.date
+    if (filter === 'notgoing') return ev.status === 'Not going'
     if (filter === 'past') return isPast(ev)
     return true
   }).sort((a, b) => {
@@ -606,6 +704,14 @@ export default function App() {
       {/* Edit modal */}
       {editingEv && (
         <EditModal ev={editingEv} onSave={handleEditSave} onClose={() => setEditingEv(null)} />
+      )}
+
+      {/* PIN modal */}
+      {pinModal && (
+        <PinModal
+          onSuccess={() => { setPinVerified(true); setPinModal(null); pinModal(); }}
+          onClose={() => setPinModal(null)}
+        />
       )}
     </div>
   )

@@ -29,7 +29,7 @@ exports.handler = async (event) => {
 
   try {
     const body = JSON.parse(event.body);
-    const { text, sourceUrl } = body;
+    const { text, sourceUrl, context } = body;
 
     // ── Normalise images ───────────────────────────────────────────────────────
     // Shortcuts sends ImagesJSON as a string like:
@@ -86,6 +86,7 @@ exports.handler = async (event) => {
       text: `Extract ALL events from this content.
 ${text ? `Text/URL: ${text}` : ''}
 ${sourceUrl ? `Source: ${sourceUrl}` : ''}
+${context ? `User context: ${context}` : ''}
 ${userContent.length === 1 ? 'No images provided — extract from text only.' : ''}
 
 Return ONLY a JSON array. Each event object must have:
