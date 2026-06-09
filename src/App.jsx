@@ -278,6 +278,18 @@ function EventCard({ ev, onUpdate, onDelete, onEdit }) {
                 fontWeight: 500,
               }}>✕ Not going</span>
             )}
+            {ev.cost && (
+              <span style={{
+                fontSize: 11, padding: '3px 9px', borderRadius: 20,
+                background: '#F0EBF8', color: '#5B21B6', fontWeight: 500,
+              }}>🎟 {ev.cost}</span>
+            )}
+            {ev.addedBy && (
+              <span style={{
+                fontSize: 11, padding: '3px 9px', borderRadius: 20,
+                background: 'var(--ink-06)', color: 'var(--ink-30)', fontWeight: 400,
+              }}>{ev.addedBy === 'Shortcut' ? '📱' : ev.addedBy === 'Scraped' ? '🤖' : ev.addedBy === 'Claude' ? '✦' : '✎'} {ev.addedBy}</span>
+            )}
           </div>
         )}
 
@@ -382,6 +394,7 @@ function EditModal({ ev, onSave, onClose }) {
     venueUrl: ev.venueUrl || '',
     sourceUrl: ev.sourceUrl || '',
     imageUrl: ev.imageUrl || '',
+    cost: ev.cost || '',
   })
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }))
@@ -410,6 +423,7 @@ function EditModal({ ev, onSave, onClose }) {
           { label: 'Location', key: 'location', type: 'text' },
           { label: 'People', key: 'people', type: 'text', placeholder: 'e.g. ask Alice, maybe Tom' },
           { label: 'Venue URL', key: 'venueUrl', type: 'url' },
+          { label: 'Cost', key: 'cost', type: 'text', placeholder: 'e.g. €10, free, pay what you can' },
           { label: 'Image URL', key: 'imageUrl', type: 'url' },
         ].map(({ label, key, type, placeholder }) => (
           <div key={key} style={{ marginBottom: 14 }}>
@@ -555,6 +569,7 @@ export default function App() {
   const [editingEv, setEditingEv] = useState(null)
   const [pinModal, setPinModal] = useState(null) // stores the action to run after PIN
   const [pinVerified, setPinVerified] = useState(checkPin)
+  const [search, setSearch] = useState('')
 
 
   const requirePin = (action) => {
@@ -595,7 +610,12 @@ export default function App() {
   const now = new Date(); now.setHours(0, 0, 0, 0)
   const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0)
 
+  const searchLower = search.toLowerCase().trim()
   const filtered = events.filter(ev => {
+    if (searchLower) {
+      const haystack = [ev.name, ev.location, ev.description, ev.type, ev.notes].filter(Boolean).join(' ').toLowerCase()
+      if (!haystack.includes(searchLower)) return false
+    }
     if (filter === 'upcoming') return !isPast(ev) && ev.status !== 'Not going'
     if (filter === 'soon') {
       const d = parseDate(ev.date)
@@ -655,6 +675,31 @@ export default function App() {
           <CalendarWidget events={events} />
         ) : (
           <>
+            {/* Search */}
+            <div style={{ position: 'relative', marginBottom: 12 }}>
+              <input
+                type="search"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Search events, venues, types…"
+                style={{
+                  width: '100%', padding: '9px 14px 9px 36px',
+                  fontSize: 14, fontFamily: 'var(--sans)',
+                  border: '1px solid var(--ink-10)', borderRadius: 'var(--radius-sm)',
+                  background: 'var(--warm-white)', color: 'var(--ink)',
+                  outline: 'none', boxSizing: 'border-box',
+                }}
+              />
+              <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--ink-30)', fontSize: 15, pointerEvents: 'none' }}>⌕</span>
+              {search && (
+                <button onClick={() => setSearch('')} style={{
+                  position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)',
+                  background: 'none', border: 'none', color: 'var(--ink-30)',
+                  fontSize: 16, cursor: 'pointer', lineHeight: 1, padding: '0 2px',
+                }}>×</button>
+              )}
+            </div>
+
             {/* Filters */}
             <div style={{ display: 'flex', gap: 6, overflowX: 'auto', scrollbarWidth: 'none', marginBottom: 16, paddingBottom: 2 }}>
               {FILTERS.map(f => (
@@ -682,7 +727,7 @@ export default function App() {
               </div>
             ) : filtered.length === 0 ? (
               <div style={{ textAlign: 'center', padding: 60, color: 'var(--ink-30)', fontFamily: 'var(--serif)', fontSize: 16, fontStyle: 'italic' }}>
-                {filter === 'past' ? 'No past events' : 'Nothing here yet'}
+                {searchLower ? `No results for "${search}"` : filter === 'past' ? 'No past events' : 'Nothing here yet'}
               </div>
             ) : (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 14 }}>
